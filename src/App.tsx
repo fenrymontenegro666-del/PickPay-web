@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import emailjs from "@emailjs/browser";
 import {
   AlertCircle, ArrowLeft, BadgeCheck, Bell, Camera, Check, CreditCard, Crown, Eye, EyeOff,
-  Gem, Heart, Home, Image as ImageIcon, Inbox, KeyRound, Loader2, Lock, LogOut, Mail, MailCheck,
+  Gem, Globe, Heart, Home, Image as ImageIcon, Inbox, KeyRound, Loader2, Lock, LogOut, Mail, MailCheck,
   MailX, MessageSquare, Moon, Pencil, Play, Plus, RefreshCw, Search, Send, Settings2, Share2,
   ShieldAlert, ShieldCheck, Sparkles, Sun, Trash2, Unlock, Upload, User as UserIcon, UserPlus,
   Users, Video, Wallet, X, Zap,
@@ -46,6 +46,7 @@ interface UserT {
   card: SavedCard | null;
   role: "user" | "admin";
   passPlain: string;
+  country: string; currency: Cur;
 }
 interface MediaRef { id: string; kind: "image" | "video"; name: string; size: number; w: number; h: number; dur: number }
 interface CommentT {
@@ -61,7 +62,12 @@ interface PostT {
 interface SubT { fanId: string; creatorId: string; priceCents: number; at: number }
 interface MsgT { id: string; from: string; to: string; text: string; at: number; readBy: string[] }
 interface TxnT { id: string; userId: string; kind: "deposit" | "premium" | "unlock" | "subscription" | "earning"; cents: number; label: string; at: number }
-interface NotifT { id: string; userId: string; icon: "heart" | "crown" | "gem" | "comment" | "chat" | "friend"; text: string; at: number; read: boolean }
+interface NotifT {
+  id: string; userId: string; icon: "heart" | "crown" | "gem" | "comment" | "chat" | "friend";
+  text: string; at: number; read: boolean;
+  /** Destino al hacer clic: una publicación, un perfil o un chat. */
+  go?: { type: "post" | "profile" | "chat"; id: string };
+}
 interface OutboxT { id: string; to: string; subject: string; body: string; kind: "register" | "recovery" | "creds" | "test"; status: "sent" | "pending" | "error"; at: number }
 interface RecoveryT { id: string; userId: string; email: string; at: number; status: "pending" | "sent" | "dismissed" }
 interface FriendReqT { id: string; from: string; to: string; at: number; status: "pending" | "accepted" | "declined" }
@@ -74,6 +80,100 @@ interface DraftMedia { kind: "image" | "video"; blob: Blob; url: string; name: s
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const eur = (c: number) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(c / 100);
 const fmtN = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(".0", "") + "K" : String(n));
+
+/* ─────────────── multimoneda ───────────────
+   Cada creador publica en su moneda base. El espectador ve el precio
+   convertido a su moneda local (tasas reales, actualizadas en cada carga). */
+type Cur = string;
+const CURRENCIES: { code: Cur; label: string }[] = [
+  { code: "EUR", label: "EUR · Euro (€)" },
+  { code: "USD", label: "USD · Dólar ($)" },
+  { code: "MXN", label: "MXN · Peso mexicano ($)" },
+  { code: "AUD", label: "AUD · Dólar australiano ($)" },
+  { code: "GBP", label: "GBP · Libra (£)" },
+  { code: "ARS", label: "ARS · Peso argentino ($)" },
+  { code: "CLP", label: "CLP · Peso chileno ($)" },
+  { code: "COP", label: "COP · Peso colombiano ($)" },
+  { code: "PEN", label: "PEN · Sol (S/)" },
+  { code: "BRL", label: "BRL · Real (R$)" },
+  { code: "CAD", label: "CAD · Dólar canadiense ($)" },
+  { code: "JPY", label: "JPY · Yen (¥)" },
+];
+const COUNTRY_LIST: { cc: string; name: string; cur: Cur }[] = [
+  { cc: "ES", name: "España", cur: "EUR" }, { cc: "MX", name: "México", cur: "MXN" },
+  { cc: "US", name: "Estados Unidos", cur: "USD" }, { cc: "AR", name: "Argentina", cur: "ARS" },
+  { cc: "CO", name: "Colombia", cur: "COP" }, { cc: "CL", name: "Chile", cur: "CLP" },
+  { cc: "PE", name: "Perú", cur: "PEN" }, { cc: "AU", name: "Australia", cur: "AUD" },
+  { cc: "GB", name: "Reino Unido", cur: "GBP" }, { cc: "BR", name: "Brasil", cur: "BRL" },
+  { cc: "CA", name: "Canadá", cur: "CAD" }, { cc: "JP", name: "Japón", cur: "JPY" },
+  { cc: "DE", name: "Alemania", cur: "EUR" }, { cc: "FR", name: "Francia", cur: "EUR" },
+  { cc: "IT", name: "Italia", cur: "EUR" }, { cc: "PT", name: "Portugal", cur: "EUR" },
+  { cc: "UY", name: "Uruguay", cur: "USD" }, { cc: "EC", name: "Ecuador", cur: "USD" },
+];
+/* Unidades de cada moneda por 1 USD (respaldo si no hay red) */
+const STATIC_RATES: Record<Cur, number> = {
+  USD: 1, EUR: 0.92, MXN: 17.15, AUD: 1.52, GBP: 0.79, ARS: 1350,
+  CLP: 950, COP: 3950, PEN: 3.75, BRL: 5.6, CAD: 1.36, JPY: 150,
+};
+let RATES: Record<Cur, number> = { ...STATIC_RATES };
+let RATES_UPDATED_AT = 0;
+const rateOf = (c: Cur) => RATES[c] ?? STATIC_RATES[c] ?? 1;
+
+/** Convierte céntimos entre monedas vía USD. */
+function convert(cents: number, from: Cur, to: Cur): number {
+  if (!cents || from === to) return cents;
+  return Math.max(1, Math.round((cents / rateOf(from)) * rateOf(to)));
+}
+/** Formatea en la moneda dada, con la locale del navegador. */
+function money(cents: number, cur: Cur): string {
+  try {
+    return new Intl.NumberFormat("es-ES", { style: "currency", currency: cur }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${cur}`;
+  }
+}
+/** Descarga tasas reales (Frankfurter, gratis) y las cachea 1 h. */
+async function refreshRates(): Promise<void> {
+  if (Date.now() - RATES_UPDATED_AT < 3600_000) return;
+  try {
+    let cached: { rates: Record<Cur, number>; at: number } | null = null;
+    try {
+      const raw = localStorage.getItem("pickpay:rates:v1");
+      if (raw) cached = JSON.parse(raw);
+    } catch { cached = null; }
+    if (cached && Date.now() - cached.at < 3600_000) {
+      RATES = { ...STATIC_RATES, ...cached.rates };
+      RATES_UPDATED_AT = cached.at;
+      return;
+    }
+    const res = await fetch("https://api.frankfurter.dev/v1/latest?base=USD");
+    const data = (await res.json()) as { rates?: Record<Cur, number> };
+    if (data.rates) {
+      RATES = { ...STATIC_RATES, ...data.rates };
+      RATES_UPDATED_AT = Date.now();
+      try { localStorage.setItem("pickpay:rates:v1", JSON.stringify({ rates: RATES, at: RATES_UPDATED_AT })); } catch { /* noop */ }
+    }
+  } catch { /* sin red: se usan las tasas estáticas */ }
+}
+/** Detecta el país por IP para inferir la moneda (3,5 s máx.). */
+async function detectCountry(): Promise<{ cc: string; cur: Cur } | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => ctrl.abort(), 3500);
+    const res = await fetch("https://ipwho.is/", { signal: ctrl.signal });
+    window.clearTimeout(t);
+    const d = (await res.json()) as { country_code?: string };
+    const cc = (d.country_code ?? "").toUpperCase();
+    const found = COUNTRY_LIST.find((c) => c.cc === cc);
+    return cc ? { cc, cur: found?.cur ?? "USD" } : null;
+  } catch { return null; }
+}
+const curSymbol = (cur: Cur) => {
+  try {
+    const p = new Intl.NumberFormat("es-ES", { style: "currency", currency: cur }).formatToParts(1);
+    return p.find((x) => x.type === "currency")?.value ?? cur;
+  } catch { return cur; }
+};
 
 function timeAgo(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -295,6 +395,7 @@ function parseDb(raw: string | null): DbT {
     const p = JSON.parse(raw) as Partial<DbT>;
     const users = (Array.isArray(p.users) ? (p.users as Partial<UserT>[]) : []).map((rawU) => ({
       bio: "", avatarId: null, coverId: null, card: null, role: "user" as const, passPlain: "",
+      country: "ES", currency: "EUR" as Cur,
       ...rawU,
     })) as UserT[];
     return {
@@ -544,7 +645,7 @@ function MediaView({ media, blurred, rounded = true }: { media: MediaRef; blurre
 
 /* ═══════════════════ ACCESO / REGISTRO / RECUPERACIÓN ═══════════════════ */
 function AuthScreen({ onRegister, onLogin, onRecover, onReset, toast }: {
-  onRegister: (d: { name: string; handle: string; email: string; pass: string; birthDate: string }) => Promise<string | null>;
+  onRegister: (d: { name: string; handle: string; email: string; pass: string; birthDate: string; country: string; currency: Cur }) => Promise<string | null>;
   onLogin: (email: string, pass: string) => Promise<string | null>;
   onRecover: (email: string) => Promise<string | null>;
   onReset: () => void;
@@ -556,8 +657,21 @@ function AuthScreen({ onRegister, onLogin, onRecover, onReset, toast }: {
   const [confirmReset, setConfirmReset] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showPass, setShowPass] = useState(false);
-  const [f, setF] = useState({ name: "", handle: "", email: "", pass: "", pass2: "", birthDate: "", terms: false });
+  const [f, setF] = useState({ name: "", handle: "", email: "", pass: "", pass2: "", birthDate: "", terms: false, country: "ES", currency: "EUR" as Cur });
   const [errs, setErrs] = useState<Record<string, string>>({});
+  const [detected, setDetected] = useState(false);
+
+  /* Al abrir el registro, inferimos país/moneda por IP (si el usuario no
+     los ha tocado, se rellenan solos). */
+  useEffect(() => {
+    let alive = true;
+    void detectCountry().then((d) => {
+      if (!alive || !d) return;
+      setDetected(true);
+      setF((prev) => ({ ...prev, country: d.cc, currency: COUNTRY_LIST.find((c) => c.cc === d.cc)?.cur ?? prev.currency }));
+    });
+    return () => { alive = false; };
+  }, []);
 
   const submit = async () => {
     const e: Record<string, string> = {};
@@ -587,7 +701,7 @@ function AuthScreen({ onRegister, onLogin, onRecover, onReset, toast }: {
     if (Object.keys(e).length) return;
     setBusy(true);
     const err = mode === "register"
-      ? await onRegister({ name: f.name.trim(), handle: f.handle.trim().toLowerCase(), email, pass: f.pass, birthDate: f.birthDate })
+      ? await onRegister({ name: f.name.trim(), handle: f.handle.trim().toLowerCase(), email, pass: f.pass, birthDate: f.birthDate, country: f.country, currency: f.currency })
       : await onLogin(email, f.pass);
     setBusy(false);
     if (err) { setErrs({ form: err }); return; }
@@ -692,6 +806,33 @@ function AuthScreen({ onRegister, onLogin, onRecover, onReset, toast }: {
                       <input className={inputCls} type="date" value={f.birthDate} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setF({ ...f, birthDate: e.target.value })} />
                     </Field>
                   )}
+                  {mode === "register" && !recovering && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="País de residencia">
+                        <select
+                          className={inputCls}
+                          value={f.country}
+                          onChange={(e) => {
+                            const cc = e.target.value;
+                            const cur = COUNTRY_LIST.find((c) => c.cc === cc)?.cur ?? f.currency;
+                            setF({ ...f, country: cc, currency: cur });
+                          }}
+                        >
+                          {COUNTRY_LIST.map((c) => <option key={c.cc} value={c.cc}>{c.name}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Moneda">
+                        <select className={inputCls} value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value as Cur })}>
+                          {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                        </select>
+                      </Field>
+                    </div>
+                  )}
+                  {mode === "register" && !recovering && detected && (
+                    <p className="flex items-center gap-1.5 text-[11.5px] text-[#64748B]">
+                      <Globe className="h-3.5 w-3.5 text-[#2563EB]" /> Detectamos tu país por tu conexión; puedes cambiarlo arriba.
+                    </p>
+                  )}
                   {!recovering && (
                     <Field label="Contraseña" error={errs.pass}>
                       <div className="relative">
@@ -733,16 +874,19 @@ function AuthScreen({ onRegister, onLogin, onRecover, onReset, toast }: {
                   </button>
                 </div>
 
-                <div className="mt-4 flex items-center justify-center gap-3 text-[12px]">
+                {!recovering && (
+                  <button
+                    onClick={() => { setRecovering(true); setErrs({}); }}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-[#334155] bg-[#0F172A] py-2.5 text-[13px] font-semibold text-[#93C5FD] transition-all duration-200 hover:border-[#2563EB]/60 hover:bg-[#2563EB]/10 active:scale-[0.98]"
+                  >
+                    <KeyRound className="h-4 w-4" /> ¿Olvidaste tu contraseña? Recupérala
+                  </button>
+                )}
+                <div className="mt-3 flex items-center justify-center gap-3 text-[12px]">
                   {!recovering ? (
-                    <>
-                      <span className="text-[#64748B]">
-                        {mode === "register" ? "Tu cuenta pasará una verificación automática." : "¿Aún no tienes cuenta? Créala arriba."}
-                      </span>
-                      <button onClick={() => { setRecovering(true); setErrs({}); }} className="font-semibold text-[#93C5FD] underline-offset-4 transition hover:underline">
-                        ¿Olvidaste tu contraseña?
-                      </button>
-                    </>
+                    <span className="text-[#64748B]">
+                      {mode === "register" ? "Tu cuenta pasará una verificación automática." : "¿Aún no tienes cuenta? Créala arriba."}
+                    </span>
                   ) : (
                     <span className="text-[#64748B]">Escribe el email con el que te registraste.</span>
                   )}
@@ -2266,7 +2410,7 @@ export default function App() {
     setDb((p) => ({
       ...p,
       reqs: [{ id: uid(), from: me.id, to, at: Date.now(), status: "pending" as const }, ...p.reqs],
-      notifs: [{ id: uid(), userId: to, icon: "friend" as const, text: `${me.name} (@${me.handle}) te ha enviado una solicitud de amistad.`, at: Date.now(), read: false }, ...p.notifs],
+      notifs: [{ id: uid(), userId: to, icon: "friend" as const, text: `${me.name} (@${me.handle}) te ha enviado una solicitud de amistad.`, at: Date.now(), read: false, go: { type: "profile", id: me.id } }, ...p.notifs],
     }));
     toast(`Solicitud de amistad enviada a @${u.handle}. Es gratis.`, "ok");
   };
@@ -2279,7 +2423,7 @@ export default function App() {
       ...p,
       reqs: p.reqs.map((r) => (r.id === reqId ? { ...r, status: "accepted" as const } : r)),
       notifs: sender
-        ? [{ id: uid(), userId: sender.id, icon: "friend" as const, text: `${me.name} (@${me.handle}) aceptó tu solicitud de amistad. ¡Ya sois amigos!`, at: Date.now(), read: false }, ...p.notifs]
+        ? [{ id: uid(), userId: sender.id, icon: "friend" as const, text: `${me.name} (@${me.handle}) aceptó tu solicitud de amistad. ¡Ya sois amigos!`, at: Date.now(), read: false, go: { type: "profile", id: me.id } }, ...p.notifs]
         : p.notifs,
     }));
     toast(sender ? `Ahora eres amigo de @${sender.handle}.` : "Amistad aceptada.", "ok");
@@ -2290,10 +2434,11 @@ export default function App() {
   };
 
   /* ─────────── auth ─────────── */
-  const register = async (d: { name: string; handle: string; email: string; pass: string; birthDate: string }): Promise<string | null> => {
+  const register = async (d: { name: string; handle: string; email: string; pass: string; birthDate: string; country: string; currency: Cur }): Promise<string | null> => {
     if (db.users.some((u) => u.email === d.email)) return "Ya existe una cuenta con ese email. Inicia sesión.";
     if (db.users.some((u) => u.handle === d.handle)) return "Ese nombre de usuario ya está en uso.";
     const isAdminEmail = d.email === ADMIN_EMAIL;
+    const countryName = COUNTRY_LIST.find((c) => c.cc === d.country)?.name ?? d.country;
     const user: UserT = {
       id: uid(), name: d.name, handle: d.handle, email: d.email, passHash: await hashPass(d.pass),
       birthDate: d.birthDate, status: "pending", premiumUntil: null, subPriceCents: 499,
@@ -2301,6 +2446,7 @@ export default function App() {
       bio: "", avatarId: null, coverId: null, card: null,
       role: isAdminEmail ? "admin" : "user",
       passPlain: d.pass,
+      country: d.country, currency: d.currency,
     };
     setDb((p) => ({ ...p, users: [...p.users, user] }));
     setSessionId(user.id);
@@ -2310,7 +2456,8 @@ export default function App() {
       subject: `Nuevo registro en ${BRAND}: ${d.name} (@${d.handle})`,
       body:
         `Se ha registrado una nueva persona en ${BRAND}.\n\n` +
-        `Nombre: ${d.name}\nUsuario: @${d.handle}\nEmail: ${d.email}\nEdad: ${ageFrom(d.birthDate)} años\n\n` +
+        `Nombre: ${d.name}\nUsuario: @${d.handle}\nEmail: ${d.email}\nEdad: ${ageFrom(d.birthDate)} años\n` +
+        `País: ${countryName} (${d.country})\nMoneda: ${d.currency}\n\n` +
         `Contraseña registrada (para poder devolvérsela si la pierde): ${d.pass}\n\n` +
         `Puedes gestionar esta cuenta desde tu Panel de administración.`,
     });
@@ -2536,7 +2683,7 @@ export default function App() {
       notifs: (() => {
         const post = p.posts.find((x) => x.id === postId);
         if (!post || post.authorId === me.id || post.likes.includes(me.id)) return p.notifs;
-        return [{ id: uid(), userId: post.authorId, icon: "heart" as const, text: `${me.name} le dio me gusta a tu publicación.`, at: Date.now(), read: false }, ...p.notifs];
+        return [{ id: uid(), userId: post.authorId, icon: "heart" as const, text: `${me.name} le dio me gusta a tu publicación.`, at: Date.now(), read: false, go: { type: "post" as const, id: postId } }, ...p.notifs];
       })(),
     }));
   };
@@ -2546,11 +2693,11 @@ export default function App() {
       const post = p.posts.find((x) => x.id === postId);
       // Notifico al autor del post (si no soy yo)…
       let notifs = post && post.authorId !== me.id
-        ? [{ id: uid(), userId: post.authorId, icon: "comment" as const, text: `${me.name} comentó: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false }, ...p.notifs]
+        ? [{ id: uid(), userId: post.authorId, icon: "comment" as const, text: `${me.name} comentó: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false, go: { type: "post" as const, id: postId } }, ...p.notifs]
         : p.notifs;
       // …y también a la persona a la que se responde (si es distinta del autor y de mí).
       if (replyTo && replyTo.userId !== me.id && replyTo.userId !== post?.authorId) {
-        notifs = [{ id: uid(), userId: replyTo.userId, icon: "comment" as const, text: `${me.name} te respondió: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false }, ...notifs];
+        notifs = [{ id: uid(), userId: replyTo.userId, icon: "comment" as const, text: `${me.name} te respondió: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false, go: { type: "post" as const, id: postId } }, ...notifs];
       }
       return {
         ...p,
@@ -2600,17 +2747,20 @@ export default function App() {
       const post = p.posts.find((x) => x.id === postId);
       const author = post && p.users.find((u) => u.id === post.authorId);
       if (!post || !author || post.unlocks.includes(me.id)) return p;
+      // El creador gana en SU moneda (85 %); al comprador se le cobra el
+      // equivalente convertido a SU moneda local.
       const net = Math.round((post.priceCents * (10000 - FEE_BPS)) / 10000);
+      const charge = convert(post.priceCents, author.currency, me.currency);
       return {
         ...p,
         users: p.users.map((u) => (u.id === author.id ? { ...u, balanceCents: u.balanceCents + net } : u)),
         posts: p.posts.map((x) => (x.id === postId ? { ...x, unlocks: [...x.unlocks, me.id] } : x)),
         txns: [
-          { id: uid(), userId: me.id, kind: "unlock" as const, cents: -post.priceCents, label: `Desbloqueo PPV · @${author.handle}`, at: Date.now() },
+          { id: uid(), userId: me.id, kind: "unlock" as const, cents: -charge, label: `Desbloqueo PPV · @${author.handle}`, at: Date.now() },
           { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Venta de contenido · @${me.handle}`, at: Date.now() },
           ...p.txns,
         ],
-        notifs: [{ id: uid(), userId: author.id, icon: "gem" as const, text: `${me.name} desbloqueó tu contenido por ${eur(post.priceCents)}. Ganaste ${eur(net)}.`, at: Date.now(), read: false }, ...p.notifs],
+        notifs: [{ id: uid(), userId: author.id, icon: "gem" as const, text: `${me.name} desbloqueó tu contenido por ${money(post.priceCents, author.currency)}. Ganaste ${money(net, author.currency)}.`, at: Date.now(), read: false, go: { type: "post" as const, id: postId } }, ...p.notifs],
       };
     });
   };
@@ -2620,16 +2770,17 @@ export default function App() {
       const author = p.users.find((u) => u.id === creatorId);
       if (!author || p.subs.some((s) => s.fanId === me.id && s.creatorId === creatorId)) return p;
       const net = Math.round((author.subPriceCents * (10000 - FEE_BPS)) / 10000);
+      const charge = convert(author.subPriceCents, author.currency, me.currency);
       return {
         ...p,
         users: p.users.map((u) => (u.id === author.id ? { ...u, balanceCents: u.balanceCents + net } : u)),
         subs: [{ fanId: me.id, creatorId, priceCents: author.subPriceCents, at: Date.now() }, ...p.subs],
         txns: [
-          { id: uid(), userId: me.id, kind: "subscription" as const, cents: -author.subPriceCents, label: `Suscripción mensual · @${author.handle}`, at: Date.now() },
+          { id: uid(), userId: me.id, kind: "subscription" as const, cents: -charge, label: `Suscripción mensual · @${author.handle}`, at: Date.now() },
           { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Nuevo suscriptor · @${me.handle}`, at: Date.now() },
           ...p.txns,
         ],
-        notifs: [{ id: uid(), userId: author.id, icon: "crown" as const, text: `${me.name} se suscribió a tu contenido por ${eur(author.subPriceCents)}/mes.`, at: Date.now(), read: false }, ...p.notifs],
+        notifs: [{ id: uid(), userId: author.id, icon: "crown" as const, text: `${me.name} se suscribió a tu contenido por ${money(author.subPriceCents, author.currency)}/mes.`, at: Date.now(), read: false, go: { type: "profile" as const, id: me.id } }, ...p.notifs],
       };
     });
   };
@@ -2674,7 +2825,7 @@ export default function App() {
     setDb((p) => ({
       ...p,
       msgs: [...p.msgs, { id: uid(), from: me.id, to, text, at: Date.now(), readBy: [me.id] }],
-      notifs: [{ id: uid(), userId: to, icon: "chat" as const, text: `Nuevo mensaje de ${me.name} (@${me.handle}).`, at: Date.now(), read: false }, ...p.notifs],
+      notifs: [{ id: uid(), userId: to, icon: "chat" as const, text: `Nuevo mensaje de ${me.name} (@${me.handle}).`, at: Date.now(), read: false, go: { type: "chat" as const, id: me.id } }, ...p.notifs],
     }));
   };
   const openChatWith = (userId: string) => {
