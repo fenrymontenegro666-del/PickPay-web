@@ -2058,7 +2058,11 @@ function AdminView({ db, onSendPassword, onRetry, onDismiss, onSaveMail, onTestM
 /* ═══════════════════════════════ APP ═══════════════════════════════ */
 export default function App() {
   const [db, setDb] = useState<DbT>(loadDb);
-  const [sessionId, setSessionId] = useState<string | null>(() => { migrateOnce(); return localStorage.getItem(SES_KEY); });
+  /* La sesión vive en sessionStorage ⇒ cada pestaña/ventana del navegador
+     tiene SU propia cuenta abierta. Los datos de la comunidad (db) siguen
+     siendo compartidos, pero iniciar o cerrar sesión aquí ya no toca a
+     las demás pestañas.                                                */
+  const [sessionId, setSessionId] = useState<string | null>(() => { migrateOnce(); return sessionStorage.getItem(SES_KEY); });
   const [view, setView] = useState<View>("feed");
   const [profileId, setProfileId] = useState<string | null>(null);
   const [activeChat, setActiveChat] = useState<string | null>(null);
@@ -2097,7 +2101,8 @@ export default function App() {
       try {
         const raw = localStorage.getItem(DB_KEY);
         if (raw && raw !== rawRef.current) setDb(parseDb(raw));
-        setSessionId(localStorage.getItem(SES_KEY));
+        // ⚠ La sesión NUNCA se sincroniza: es de esta pestaña (sessionStorage).
+        // Solo se comparten los datos de la comunidad.
       } catch { /* noop */ }
     };
     let bc: BroadcastChannel | null = null;
@@ -2117,7 +2122,15 @@ export default function App() {
       bcRef.current = null;
     };
   }, []);
-  useEffect(() => { try { sessionId ? localStorage.setItem(SES_KEY, sessionId) : localStorage.removeItem(SES_KEY); } catch { /* noop */ } }, [sessionId]);
+  /* La sesión se guarda SOLO en esta pestaña (sessionStorage). Así puedes
+     tener la cuenta A abierta en una ventana y la cuenta B en otra a la
+     vez, y cerrar sesión en una no afecta a la otra.                    */
+  useEffect(() => {
+    try {
+      sessionId ? sessionStorage.setItem(SES_KEY, sessionId) : sessionStorage.removeItem(SES_KEY);
+      localStorage.removeItem(SES_KEY); // limpia la sesión global heredada (una sola vez por cambio)
+    } catch { /* noop */ }
+  }, [sessionId]);
 
   const me = useMemo(() => db.users.find((u) => u.id === sessionId) ?? null, [db.users, sessionId]);
   const premium = !!me && (me.premiumUntil ?? 0) > Date.now();
