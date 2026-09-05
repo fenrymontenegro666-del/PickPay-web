@@ -48,7 +48,11 @@ interface UserT {
   passPlain: string;
 }
 interface MediaRef { id: string; kind: "image" | "video"; name: string; size: number; w: number; h: number; dur: number }
-interface CommentT { id: string; userId: string; text: string; at: number }
+interface CommentT {
+  id: string; userId: string; text: string; at: number;
+  parentId?: string;                     // si es respuesta, id del comentario padre
+  replyTo?: { userId: string; handle: string }; // usuario al que se menciona/dirige
+}
 interface PostT {
   id: string; authorId: string; text: string; media: MediaRef | null;
   tier: "public" | "ppv"; priceCents: number;
@@ -1003,11 +1007,37 @@ function PersonRow({ user, me, rel, onOpen, onMessage, onFriend, onAccept, onDec
   );
 }
 
+/* ─────────────── texto con menciones @usuario ─────────────── */
+function MentionText({ text, db, onOpen }: { text: string; db: DbT; onOpen: (id: string) => void }) {
+  const parts = text.split(/(@[a-z0-9_]+)/gi);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("@")) {
+          const handle = part.slice(1);
+          const u = db.users.find((x) => x.handle.toLowerCase() === handle.toLowerCase());
+          if (u) {
+            return (
+              <button key={i} onClick={() => onOpen(u.id)} className="font-bold text-[#93C5FD] transition hover:underline" title={`Ver perfil de @${u.handle}`}>
+                @{u.handle}
+              </button>
+            );
+          }
+          return <span key={i} className="text-[#93C5FD]">{part}</span>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
 /* ═══════════════════ POST CARD ═══════════════════ */
 function PostCard({ post, index, me, db, act }: {
   post: PostT; index: number; me: UserT; db: DbT;
   act: {
-    like: (id: string) => void; comment: (id: string, text: string) => void; unlock: (id: string) => void;
+    like: (id: string) => void;
+    comment: (id: string, text: string, replyTo?: { userId: string; handle: string }, parentId?: string) => void;
+    unlock: (id: string) => void;
     subscribe: (creatorId: string) => void; del: (id: string) => void; openProfile: (id: string) => void;
     toast: (m: string, t?: Tone) => void;
   };
@@ -1017,6 +1047,7 @@ function PostCard({ post, index, me, db, act }: {
   const [ctext, setCtext] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
   const [heartAnim, setHeartAnim] = useState(false);
+  const [replyTarget, setReplyTarget] = useState<{ commentId: string; userId: string; handle: string; name: string } | null>(null);
   if (!author) return null;
 
   const liked = post.likes.includes(me.id);
@@ -1038,8 +1069,66 @@ function PostCard({ post, index, me, db, act }: {
   };
   const sendComment = () => {
     if (!ctext.trim()) return;
-    act.comment(post.id, ctext.trim());
+    let text = ctext.trim();
+    // Si estoy respondiendo a alguien, me aseguro de que la mención vaya al inicio.
+    if (replyTarget && !text.toLowerCase().startsWith(`@${replyTarget.handle.toLowerCase()}`)) {
+      text = `@${replyTarget.handle} ${text}`;
+    }
+    act.comment(
+      post.id,
+      text,
+      replyTarget ? { userId: replyTarget.userId, handle: replyTarget.handle } : undefined,
+      replyTarget ? replyTarget.commentId : undefined,
+    );
     setCtext("");
+    setReplyTarget(null);
+  };
+
+  const startReply = (c: CommentT) => {
+    const cu = db.users.find((u) => u.id === c.userId);
+    if (!cu) return;
+    // Si respondo a una respuesta, el hilo sigue colgando del comentario padre.
+    const threadParent = c.parentId ?? c.id;
+    setReplyTarget({ commentId: threadParent, userId: cu.id, handle: cu.handle, name: cu.name });
+    setCtext(`@${cu.handle} `);
+    setCommentsOpen(true);
+  };
+
+  const renderComment = (c: CommentT, isReply: boolean) => {
+    const cu = db.users.find((u) => u.id === c.userId);
+    if (!cu) return null;
+    return (
+      <div className="flex gap-2.5">
+        <button onClick={() => act.openProfile(cu.id)} className="shrink-0 transition active:scale-95" aria-label={`Perfil de ${cu.name}`}>
+          <Avatar name={cu.name} hue={cu.hue} size={isReply ? 26 : 30} photoId={cu.avatarId} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="rounded-xl bg-[#0F172A] px-3.5 py-2.5">
+            <p className="flex flex-wrap items-center gap-x-1.5 text-[12.5px] font-bold">
+              <button onClick={() => act.openProfile(cu.id)} className="transition hover:underline">{cu.name}</button>
+              <span className="font-normal text-[#64748B]">· {timeAgo(c.at)}</span>
+            </p>
+            {c.replyTo && (
+              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-[#64748B]">
+                ↳ en respuesta a
+                <button
+                  onClick={() => { const u = db.users.find((x) => x.id === c.replyTo!.userId); if (u) act.openProfile(u.id); }}
+                  className="font-bold text-[#93C5FD] transition hover:underline"
+                >
+                  @{c.replyTo.handle}
+                </button>
+              </p>
+            )}
+            <p className="mt-0.5 text-[14px] leading-relaxed text-[#CBD5E1]">
+              <MentionText text={c.text} db={db} onOpen={act.openProfile} />
+            </p>
+          </div>
+          <button onClick={() => startReply(c)} className="mt-1 ml-1 text-[11.5px] font-bold text-[#94A3B8] transition hover:text-[#93C5FD]">
+            Responder
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1123,24 +1212,34 @@ function PostCard({ post, index, me, db, act }: {
 
         {commentsOpen && (
           <div className="anim-fade-in space-y-3 border-t border-[#334155]/70 p-4">
-            {post.comments.map((c) => {
-              const cu = db.users.find((u) => u.id === c.userId);
-              if (!cu) return null;
+            {replyTarget && (
+              <div className="flex items-center justify-between rounded-lg bg-[#2563EB]/10 px-3 py-1.5 text-[12px] font-semibold text-[#93C5FD]">
+                <span>Respondiendo a <span className="font-bold">@{replyTarget.handle}</span></span>
+                <button onClick={() => { setReplyTarget(null); setCtext(""); }} className="text-[#94A3B8] transition hover:text-white" aria-label="Cancelar respuesta">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {post.comments.filter((c) => !c.parentId).map((c) => {
+              const replies = post.comments.filter((r) => r.parentId === c.id);
               return (
-                <div key={c.id} className="flex gap-2.5">
-                  <Avatar name={cu.name} hue={cu.hue} size={30} photoId={cu.avatarId} />
-                  <div className="min-w-0 flex-1 rounded-xl bg-[#0F172A] px-3.5 py-2.5">
-                    <p className="text-[12.5px] font-bold">{cu.name} <span className="font-normal text-[#64748B]">· {timeAgo(c.at)}</span></p>
-                    <p className="text-[14px] text-[#CBD5E1]">{c.text}</p>
-                  </div>
+                <div key={c.id} className="space-y-2">
+                  {renderComment(c, false)}
+                  {replies.map((r) => (
+                    <div key={r.id} className="ml-7 border-l-2 border-[#334155]/60 pl-3 sm:ml-9">
+                      {renderComment(r, true)}
+                    </div>
+                  ))}
                 </div>
               );
             })}
+
             <div className="flex items-center gap-2.5">
               <Avatar name={me.name} hue={me.hue} size={30} photoId={me.avatarId} />
               <input
                 className={inputCls + " flex-1 py-2 text-[14px]"}
-                placeholder="Escribe un comentario…"
+                placeholder={replyTarget ? `Responder a @${replyTarget.handle}…` : "Escribe un comentario… (usa @usuario para mencionar)"}
                 value={ctext}
                 onChange={(e) => setCtext(e.target.value.slice(0, 400))}
                 onKeyDown={(e) => e.key === "Enter" && sendComment()}
@@ -1635,9 +1734,9 @@ function SubPriceEditor({ current, onSave }: { current: number; onSave: (c: numb
 }
 
 /* ═══════════════════ CARTERA ═══════════════════ */
-function WalletView({ me, db, premium, myEarnings, mySubscribers, onAddFunds, onPremium, onCancelSub, openProfile, onCardChange }: {
+function WalletView({ me, db, premium, myEarnings, mySubscribers, onPremium, onCancelSub, openProfile, onCardChange }: {
   me: UserT; db: DbT; premium: boolean; myEarnings: number; mySubscribers: number;
-  onAddFunds: (cents: number) => void; onPremium: () => void; onCancelSub: (creatorId: string) => void;
+  onPremium: () => void; onCancelSub: (creatorId: string) => void;
   openProfile: (id: string) => void; onCardChange: () => void;
 }) {
   const txns = db.txns.filter((t) => t.userId === me.id).sort((a, b) => b.at - a.at);
@@ -1654,21 +1753,19 @@ function WalletView({ me, db, premium, myEarnings, mySubscribers, onAddFunds, on
       <Reveal>
         <div className="relative overflow-hidden rounded-2xl border border-[#334155] bg-[#1E293B] p-6">
           <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full opacity-[0.12]" style={{ background: "radial-gradient(circle, #10B981, transparent 65%)" }} />
-          <p className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.2em] text-[#64748B]"><Wallet className="h-4 w-4 text-[#6EE7B7]" /> Saldo disponible</p>
+          <p className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.2em] text-[#64748B]"><Gem className="h-4 w-4 text-[#6EE7B7]" /> Ganancias acumuladas</p>
           <p className="mt-2 font-mono text-[40px] font-bold leading-none tabular-nums tracking-tight sm:text-[48px]">{eur(me.balanceCents)}</p>
-          <p className="mt-2 text-[13.5px] text-[#94A3B8]">Para desbloquear contenido y suscribirte a creadores.</p>
-          <div className="mt-5 flex flex-wrap gap-2.5">
-            <button onClick={() => onAddFunds(2500)} className="flex items-center gap-2 rounded-xl bg-[#10B981] px-5 py-2.5 text-[14px] font-bold text-white transition hover:brightness-110 active:scale-95">
-              <Plus className="h-4 w-4" strokeWidth={2.5} /> Añadir fondos
+          <p className="mt-2 text-[13.5px] text-[#94A3B8]">Tus compras se cargan directo a tu tarjeta registrada; aquí ves lo que ganas con tu contenido.</p>
+          <div className="mt-5 flex flex-wrap items-center gap-2.5">
+            <button onClick={onCardChange} className="flex items-center gap-2.5 rounded-xl border border-[#334155] bg-[#0F172A] px-4 py-2.5 text-[13px] font-bold text-[#CBD5E1] transition hover:border-[#475569] active:scale-95">
+              <CreditCard className="h-4 w-4 text-[#93C5FD]" />
+              {me.card ? `${me.card.brand} ···· ${me.card.last4}` : "Registrar tarjeta"}
             </button>
             {!premium && (
               <button onClick={onPremium} className="flex items-center gap-2 rounded-xl bg-[#7C3AED] px-5 py-2.5 text-[14px] font-bold text-white transition hover:bg-[#6D28D9] active:scale-95">
                 <Crown className="h-4 w-4" /> Activar Premium · {eur(PREMIUM_CENTS)}/mes
               </button>
             )}
-            <button onClick={onCardChange} className="flex items-center gap-2 rounded-xl border border-[#334155] px-4 py-2.5 text-[13px] font-bold text-[#94A3B8] transition hover:border-[#475569] hover:text-white active:scale-95">
-              <CreditCard className="h-4 w-4" /> {me.card ? `Cambiar tarjeta (···· ${me.card.last4})` : "Añadir tarjeta"}
-            </button>
           </div>
           <div className="mt-5 grid grid-cols-3 gap-3">
             {[[eur(myEarnings), "ganado en ventas"], [String(mySubscribers), "suscriptores"], [String(txns.length), "movimientos"]].map(([v, l]) => (
@@ -2070,12 +2167,15 @@ export default function App() {
   const [searchFocus, setSearchFocus] = useState(false);
   const [toasts, setToasts] = useState<ToastT[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [fundsOpen, setFundsOpen] = useState(false);
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [cardModalOpen, setCardModalOpen] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [fundsAmount, setFundsAmount] = useState(2500);
+  /* Compra pendiente (desbloqueo PPV o suscripción): se cobra directo a la
+     tarjeta guardada. No hay saldo intermedio que recargar. */
+  const [pending, setPending] = useState<{ kind: "unlock"; postId: string } | { kind: "subscribe"; creatorId: string } | null>(null);
+  const [purchasing, setPurchasing] = useState(false);
+  const [changingCard, setChangingCard] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => {
     try { return (localStorage.getItem(THEME_KEY) as Theme) || "dark"; } catch { return "dark"; }
   });
@@ -2338,7 +2438,7 @@ export default function App() {
     setSearch("");
     setComposerOpen(false);
     setPremiumOpen(false);
-    setFundsOpen(false);
+    setPending(null);
     toast("Plataforma restablecida: todas las cuentas y archivos se borraron. Ya se pueden registrar de nuevo.", "warn");
   };
 
@@ -2351,18 +2451,9 @@ export default function App() {
       action();
       setPayBusy(false);
       setPremiumOpen(false);
-      setFundsOpen(false);
       setCardModalOpen(false);
       toast(successMsg, "gold");
     }, 1400);
-  };
-  const addFunds = (cents: number) => {
-    if (!me) return;
-    setDb((p) => ({
-      ...p,
-      users: p.users.map((u) => (u.id === me.id ? { ...u, balanceCents: u.balanceCents + cents } : u)),
-      txns: [{ id: uid(), userId: me.id, kind: "deposit" as const, cents, label: "Recarga de saldo", at: Date.now() }, ...p.txns],
-    }));
   };
   const buyPremium = () => {
     if (!me) return;
@@ -2449,77 +2540,121 @@ export default function App() {
       })(),
     }));
   };
-  const comment = (postId: string, text: string) => {
+  const comment = (postId: string, text: string, replyTo?: { userId: string; handle: string }, parentId?: string) => {
     if (!me) return;
     setDb((p) => {
       const post = p.posts.find((x) => x.id === postId);
-      const notifs = post && post.authorId !== me.id
+      // Notifico al autor del post (si no soy yo)…
+      let notifs = post && post.authorId !== me.id
         ? [{ id: uid(), userId: post.authorId, icon: "comment" as const, text: `${me.name} comentó: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false }, ...p.notifs]
         : p.notifs;
+      // …y también a la persona a la que se responde (si es distinta del autor y de mí).
+      if (replyTo && replyTo.userId !== me.id && replyTo.userId !== post?.authorId) {
+        notifs = [{ id: uid(), userId: replyTo.userId, icon: "comment" as const, text: `${me.name} te respondió: “${text.slice(0, 60)}${text.length > 60 ? "…" : ""}”`, at: Date.now(), read: false }, ...notifs];
+      }
       return {
         ...p,
-        posts: p.posts.map((x) => (x.id === postId ? { ...x, comments: [...x.comments, { id: uid(), userId: me.id, text, at: Date.now() }] } : x)),
+        posts: p.posts.map((x) => (x.id === postId ? { ...x, comments: [...x.comments, { id: uid(), userId: me.id, text, at: Date.now(), replyTo, parentId }] } : x)),
         notifs,
       };
     });
   };
+  /* ─────────── compras: cobro directo a la tarjeta guardada ───────────
+     Ya no hay saldo que recargar. Al desbloquear o suscribirse se abre una
+     confirmación que carga el importe a la tarjeta registrada del comprador. */
   const unlock = (postId: string) => {
     if (!me) return;
     const post = db.posts.find((p) => p.id === postId);
     const author = post && db.users.find((u) => u.id === post.authorId);
     if (!post || !author) return;
-    if (me.balanceCents < post.priceCents) {
-      setFundsAmount(Math.max(1000, post.priceCents));
-      setFundsOpen(true);
-      toast(`Saldo insuficiente: necesitas ${eur(post.priceCents)}. Añade fondos con tu tarjeta guardada.`, "warn");
-      return;
-    }
-    const net = Math.round((post.priceCents * (10000 - FEE_BPS)) / 10000);
-    setDb((p) => ({
-      ...p,
-      users: p.users.map((u) => {
-        if (u.id === me.id) return { ...u, balanceCents: u.balanceCents - post.priceCents };
-        if (u.id === author.id) return { ...u, balanceCents: u.balanceCents + net };
-        return u;
-      }),
-      posts: p.posts.map((x) => (x.id === postId ? { ...x, unlocks: [...x.unlocks, me.id] } : x)),
-      txns: [
-        { id: uid(), userId: me.id, kind: "unlock" as const, cents: -post.priceCents, label: `Desbloqueo PPV · @${author.handle}`, at: Date.now() },
-        { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Venta de contenido · @${me.handle}`, at: Date.now() },
-        ...p.txns,
-      ],
-      notifs: [{ id: uid(), userId: author.id, icon: "gem" as const, text: `${me.name} desbloqueó tu contenido por ${eur(post.priceCents)}. Ganaste ${eur(net)}.`, at: Date.now(), read: false }, ...p.notifs],
-    }));
-    toast("Contenido desbloqueado. Ya es tuyo para siempre.", "ok");
+    if (post.unlocks.includes(me.id)) return;
+    setChangingCard(false);
+    setPending({ kind: "unlock", postId });
   };
   const subscribe = (creatorId: string) => {
     if (!me || creatorId === me.id) return;
     const author = db.users.find((u) => u.id === creatorId);
     if (!author) return;
     if (db.subs.some((s) => s.fanId === me.id && s.creatorId === creatorId)) return;
-    if (me.balanceCents < author.subPriceCents) {
-      setFundsAmount(Math.max(1000, author.subPriceCents));
-      setFundsOpen(true);
-      toast(`Saldo insuficiente: la suscripción cuesta ${eur(author.subPriceCents)}/mes.`, "warn");
-      return;
+    setChangingCard(false);
+    setPending({ kind: "subscribe", creatorId });
+  };
+
+  /* Importe y descripción de la compra pendiente (para el modal). */
+  const pendingInfo = useMemo(() => {
+    if (!pending) return null;
+    if (pending.kind === "unlock") {
+      const post = db.posts.find((p) => p.id === pending.postId);
+      const author = post && db.users.find((u) => u.id === post.authorId);
+      if (!post || !author) return null;
+      return { cents: post.priceCents, title: "Desbloquear contenido", desc: `Pago único a @${author.handle} · el contenido será tuyo para siempre` };
     }
-    const net = Math.round((author.subPriceCents * (10000 - FEE_BPS)) / 10000);
-    setDb((p) => ({
-      ...p,
-      users: p.users.map((u) => {
-        if (u.id === me.id) return { ...u, balanceCents: u.balanceCents - author.subPriceCents };
-        if (u.id === author.id) return { ...u, balanceCents: u.balanceCents + net };
-        return u;
-      }),
-      subs: [{ fanId: me.id, creatorId, priceCents: author.subPriceCents, at: Date.now() }, ...p.subs],
-      txns: [
-        { id: uid(), userId: me.id, kind: "subscription" as const, cents: -author.subPriceCents, label: `Suscripción mensual · @${author.handle}`, at: Date.now() },
-        { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Nuevo suscriptor · @${me.handle}`, at: Date.now() },
-        ...p.txns,
-      ],
-      notifs: [{ id: uid(), userId: author.id, icon: "crown" as const, text: `${me.name} se suscribió a tu contenido por ${eur(author.subPriceCents)}/mes.`, at: Date.now(), read: false }, ...p.notifs],
-    }));
-    toast(`Suscrito a @${author.handle}. Todo su contenido de pago quedó desbloqueado.`, "gold");
+    const author = db.users.find((u) => u.id === pending.creatorId);
+    if (!author) return null;
+    return { cents: author.subPriceCents, title: `Suscripción a @${author.handle}`, desc: `Pago mensual · desbloquea todo su contenido de pago` };
+  }, [pending, db.posts, db.users]);
+
+  const completeUnlock = (postId: string) => {
+    if (!me) return;
+    setDb((p) => {
+      const post = p.posts.find((x) => x.id === postId);
+      const author = post && p.users.find((u) => u.id === post.authorId);
+      if (!post || !author || post.unlocks.includes(me.id)) return p;
+      const net = Math.round((post.priceCents * (10000 - FEE_BPS)) / 10000);
+      return {
+        ...p,
+        users: p.users.map((u) => (u.id === author.id ? { ...u, balanceCents: u.balanceCents + net } : u)),
+        posts: p.posts.map((x) => (x.id === postId ? { ...x, unlocks: [...x.unlocks, me.id] } : x)),
+        txns: [
+          { id: uid(), userId: me.id, kind: "unlock" as const, cents: -post.priceCents, label: `Desbloqueo PPV · @${author.handle}`, at: Date.now() },
+          { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Venta de contenido · @${me.handle}`, at: Date.now() },
+          ...p.txns,
+        ],
+        notifs: [{ id: uid(), userId: author.id, icon: "gem" as const, text: `${me.name} desbloqueó tu contenido por ${eur(post.priceCents)}. Ganaste ${eur(net)}.`, at: Date.now(), read: false }, ...p.notifs],
+      };
+    });
+  };
+  const completeSubscribe = (creatorId: string) => {
+    if (!me) return;
+    setDb((p) => {
+      const author = p.users.find((u) => u.id === creatorId);
+      if (!author || p.subs.some((s) => s.fanId === me.id && s.creatorId === creatorId)) return p;
+      const net = Math.round((author.subPriceCents * (10000 - FEE_BPS)) / 10000);
+      return {
+        ...p,
+        users: p.users.map((u) => (u.id === author.id ? { ...u, balanceCents: u.balanceCents + net } : u)),
+        subs: [{ fanId: me.id, creatorId, priceCents: author.subPriceCents, at: Date.now() }, ...p.subs],
+        txns: [
+          { id: uid(), userId: me.id, kind: "subscription" as const, cents: -author.subPriceCents, label: `Suscripción mensual · @${author.handle}`, at: Date.now() },
+          { id: uid(), userId: author.id, kind: "earning" as const, cents: net, label: `Nuevo suscriptor · @${me.handle}`, at: Date.now() },
+          ...p.txns,
+        ],
+        notifs: [{ id: uid(), userId: author.id, icon: "crown" as const, text: `${me.name} se suscribió a tu contenido por ${eur(author.subPriceCents)}/mes.`, at: Date.now(), read: false }, ...p.notifs],
+      };
+    });
+  };
+
+  /* Confirma la compra pendiente. `card` se pasa solo si se acaba de registrar
+     una tarjeta nueva (queda guardada para próximas compras). */
+  const confirmPurchase = (card?: SavedCard) => {
+    if (!pending || !me) return;
+    setPurchasing(true);
+    window.setTimeout(() => {
+      if (card) {
+        setDb((p) => ({ ...p, users: p.users.map((u) => (u.id === me.id ? { ...u, card } : u)) }));
+      }
+      if (pending.kind === "unlock") {
+        completeUnlock(pending.postId);
+        toast("Pago realizado con tu tarjeta. Contenido desbloqueado.", "ok");
+      } else {
+        completeSubscribe(pending.creatorId);
+        const author = db.users.find((u) => u.id === pending.creatorId);
+        toast(`Pago realizado con tu tarjeta. Suscrito a @${author?.handle ?? "creador"}.`, "gold");
+      }
+      setPurchasing(false);
+      setPending(null);
+      setChangingCard(false);
+    }, 1400);
   };
   const cancelSub = (creatorId: string) => {
     if (!me) return;
@@ -2875,7 +3010,6 @@ export default function App() {
           {view === "wallet" && (
             <WalletView
               me={me} db={db} premium={premium} myEarnings={myEarnings} mySubscribers={mySubscribers}
-              onAddFunds={(c) => { setFundsAmount(c); setFundsOpen(true); }}
               onPremium={() => setPremiumOpen(true)}
               onCancelSub={cancelSub}
               openProfile={(id) => { setProfileId(id); setView("profile"); }}
@@ -3044,33 +3178,44 @@ export default function App() {
         </div>
       </Modal>
 
-      <Modal open={fundsOpen} onClose={() => !payBusy && setFundsOpen(false)}>
-        <div className="flex items-center justify-between border-b border-[#334155] px-5 py-4">
-          <h3 className="text-[17px] font-bold" style={{ fontFamily: DISPLAY }}>Añadir fondos</h3>
-          <button onClick={() => !payBusy && setFundsOpen(false)} className="rounded-lg p-1.5 text-[#94A3B8] transition hover:bg-[#0F172A] hover:text-white" aria-label="Cerrar"><X className="h-5 w-5" /></button>
-        </div>
-        <div className="p-5">
-          <div className="mb-4 grid grid-cols-4 gap-2">
-            {[1000, 2500, 5000, 10000].map((c) => (
-              <button
-                key={c}
-                onClick={() => setFundsAmount(c)}
-                className={`rounded-xl border py-2.5 font-mono text-[13px] font-bold tabular-nums transition-all duration-200 active:scale-95 ${fundsAmount === c ? "border-[#10B981] bg-[#10B981]/12 text-[#6EE7B7]" : "border-[#334155] bg-[#0F172A] text-[#94A3B8] hover:border-[#475569]"}`}
-              >
-                {eur(c)}
-              </button>
-            ))}
-          </div>
-          <p className="mb-4 text-center text-[13px] text-[#94A3B8]">Saldo actual: <span className="font-mono font-bold text-[#6EE7B7]">{eur(me.balanceCents)}</span> · se añadirán <span className="font-mono font-bold text-[#F8FAFC]">{eur(fundsAmount)}</span></p>
-          <PayPanel
-            me={me}
-            cta="Añadir fondos"
-            amountLabel={eur(fundsAmount)}
-            busy={payBusy}
-            onConfirm={() => applyPayment(() => addFunds(fundsAmount), me.card ?? { brand: "Tarjeta", last4: "0000", holder: me.name }, `Se añadieron ${eur(fundsAmount)} a tu cartera.`)}
-            onChangeCard={() => setCardModalOpen(true)}
-          />
-        </div>
+      {/* Confirmación de compra: desbloqueo PPV o suscripción, cobro directo a la tarjeta */}
+      <Modal open={!!pending} onClose={() => !purchasing && setPending(null)}>
+        {pending && pendingInfo && (
+          <>
+            <div className="flex items-center justify-between border-b border-[#334155] px-5 py-4">
+              <h3 className="text-[17px] font-bold" style={{ fontFamily: DISPLAY }}>{pendingInfo.title}</h3>
+              <button onClick={() => !purchasing && setPending(null)} className="rounded-lg p-1.5 text-[#94A3B8] transition hover:bg-[#0F172A] hover:text-white" aria-label="Cerrar"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="p-5">
+              <div className="mb-4 flex items-center justify-between rounded-xl border border-[#334155] bg-[#0F172A] px-4 py-3">
+                <p className="text-[13px] text-[#94A3B8]">{pendingInfo.desc}</p>
+                <p className="ml-3 font-mono text-[18px] font-bold tabular-nums text-[#F8FAFC]">{eur(pendingInfo.cents)}</p>
+              </div>
+              {me.card && !changingCard ? (
+                <PayPanel
+                  me={me}
+                  cta="Pagar"
+                  amountLabel={eur(pendingInfo.cents)}
+                  busy={purchasing}
+                  onConfirm={() => confirmPurchase()}
+                  onChangeCard={() => setChangingCard(true)}
+                />
+              ) : (
+                <CardForm
+                  cta="Pagar"
+                  amountLabel={eur(pendingInfo.cents)}
+                  busy={purchasing}
+                  onPay={(card) => confirmPurchase(card)}
+                />
+              )}
+              {changingCard && me.card && (
+                <button onClick={() => setChangingCard(false)} className="mt-2 w-full text-center text-[12.5px] font-semibold text-[#94A3B8] underline-offset-4 transition hover:text-white hover:underline">
+                  Volver a mi tarjeta ···· {me.card.last4}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </Modal>
 
       <Modal open={cardModalOpen} onClose={() => !payBusy && setCardModalOpen(false)}>
