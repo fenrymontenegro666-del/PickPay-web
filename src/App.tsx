@@ -1277,7 +1277,10 @@ function PostCard({ post, index, me, db, act }: {
 
   return (
     <Reveal delay={Math.min(index * 70, 280)}>
-      <article className="overflow-hidden rounded-2xl border border-[#334155] bg-[#1E293B] transition-colors duration-200 hover:border-[#475569]">
+      <article
+        id={`post-${post.id}`}
+        className="scroll-mt-24 overflow-hidden rounded-2xl border border-[#334155] bg-[#1E293B] transition-colors duration-200 hover:border-[#475569] target:anim-post-flash"
+      >
         <div className="flex items-start gap-3 p-4 pb-3">
           <button onClick={() => act.openProfile(author.id)} className="transition active:scale-95" aria-label={`Perfil de ${author.name}`}>
             <Avatar name={author.name} hue={author.hue} size={44} photoId={author.avatarId} />
@@ -2833,6 +2836,39 @@ export default function App() {
     setView("chats");
     setProfileId(null);
   };
+
+  /* Desplaza hasta una publicación y la resalta brevemente. */
+  const scrollToPost = (postId: string) => {
+    setView("feed");
+    setProfileId(null);
+    setNotifOpen(false);
+    window.setTimeout(() => {
+      const el = document.getElementById(`post-${postId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.remove("anim-post-flash");
+      void el.offsetWidth; // reinicia la animación si ya había sonado
+      el.classList.add("anim-post-flash");
+      window.setTimeout(() => el.classList.remove("anim-post-flash"), 1600);
+    }, 60);
+  };
+
+  /* Una notificación lleva a su origen: publicación, perfil, chat o solicitud. */
+  const openNotif = (n: NotifT) => {
+    setDb((p) => ({ ...p, notifs: p.notifs.map((x) => (x.id === n.id ? { ...x, read: true } : x)) }));
+    if (!n.go) { setNotifOpen(false); return; }
+    if (n.go.type === "post") {
+      scrollToPost(n.go.id);
+    } else if (n.go.type === "profile") {
+      setNotifOpen(false);
+      setProfileId(n.go.id);
+      setView("profile");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (n.go.type === "chat") {
+      openChatWith(n.go.id);
+      setNotifOpen(false);
+    }
+  };
   useEffect(() => {
     if (!me || view !== "chats" || !activeChat) return;
     const unreadMine = db.msgs.some((m) => m.from === activeChat && m.to === me.id && !m.readBy.includes(me.id));
@@ -2961,15 +2997,24 @@ export default function App() {
                   {myNotifs.length === 0 && <p className="px-3 pb-3 text-[13px] text-[#64748B]">Cuando alguien interactúe contigo, lo verás aquí.</p>}
                   <div className="max-h-80 overflow-y-auto">
                     {myNotifs.slice(0, 10).map((n) => (
-                      <div key={n.id} className={`flex items-start gap-3 rounded-xl px-3 py-2.5 transition hover:bg-[#0F172A] ${n.read ? "opacity-60" : ""}`}>
+                      <button
+                        key={n.id}
+                        onClick={() => openNotif(n)}
+                        title={n.go ? "Ir al origen de la notificación" : undefined}
+                        className={`group flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 hover:bg-[#0F172A] active:scale-[0.99] ${n.read ? "opacity-60" : ""}`}
+                      >
                         <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${n.icon === "heart" ? "bg-[#EC4899]/15 text-[#EC4899]" : n.icon === "crown" ? "bg-[#7C3AED]/15 text-[#C4B5FD]" : n.icon === "gem" ? "bg-[#10B981]/15 text-[#6EE7B7]" : n.icon === "friend" ? "bg-[#2563EB]/15 text-[#93C5FD]" : "bg-[#2563EB]/15 text-[#93C5FD]"}`}>
                           {n.icon === "heart" ? <Heart className="h-4 w-4" /> : n.icon === "crown" ? <Crown className="h-4 w-4" /> : n.icon === "gem" ? <Gem className="h-4 w-4" /> : n.icon === "friend" ? <UserPlus className="h-4 w-4" /> : n.icon === "chat" ? <MessageSquare className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />}
                         </span>
-                        <div>
-                          <p className="text-[13px] leading-snug text-[#F8FAFC]">{n.text}</p>
-                          <p className="mt-0.5 text-[11px] text-[#64748B]">{timeAgo(n.at)}</p>
-                        </div>
-                      </div>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13px] leading-snug text-[#F8FAFC]">{n.text}</span>
+                          <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#64748B]">
+                            {timeAgo(n.at)}
+                            {n.go && <span className="font-semibold text-[#93C5FD] opacity-0 transition group-hover:opacity-100">Ver →</span>}
+                          </span>
+                        </span>
+                        {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#2563EB]" />}
+                      </button>
                     ))}
                   </div>
                 </div>
