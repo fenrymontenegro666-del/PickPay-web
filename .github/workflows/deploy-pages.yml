@@ -42,8 +42,10 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Compilar (base relativa ⇒ sirve bajo /PickPay-web/)
+      - name: Compilar (base /PickPay-web/ para GitHub Pages)
         run: npm run build
+        env:
+          VITE_BASE: "/PickPay-web/"
 
       - name: Subir artefacto
         uses: actions/upload-pages-artifact@v3
