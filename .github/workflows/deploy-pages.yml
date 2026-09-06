@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════════
+#  PickPay · Despliegue automático en GitHub Pages
+#
+#  Cada push a `main` (o dispatch manual) → build de producción
+#  con base "/PickPay-web/" → publicación en:
+#  https://<tu-usuario>.github.io/PickPay-web/
+#
+#  La base se inyecta en el build (--base) para no tocar la
+#  configuración local de Vite: el desarrollo sigue usando "/".
+#
+#  REQUISITO (una sola vez): en el repositorio →
+#  Settings → Pages → Source: "GitHub Actions".
+# ═══════════════════════════════════════════════════════════════
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Permisos mínimos para publicar en Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un solo despliegue a la vez; el nuevo sustituye al anterior en cola
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  # ⚠ Debe coincidir con el nombre EXACTO del repositorio en GitHub.
+  BASE_PATH: /PickPay-web/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Build de producción con la base de GitHub Pages.
+      # Equivale a `base: "/PickPay-web/"` en vite.config sin editarlo.
+      - name: Build (base /PickPay-web/)
+        run: npx vite build --base=${{ env.BASE_PATH }}
+
+      # SPA sin servidor: este archivo evita 404 si Pages recibe
+      # una ruta desconocida (redirige todo a index.html).
+      - name: Preparar artifact
+        run: |
+          cp dist/index.html dist/404.html
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
