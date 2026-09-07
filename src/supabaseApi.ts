@@ -22,6 +22,16 @@ export interface Profile {
   currency: string;
 }
 
+export interface Rating {
+  id: string;
+  post_id: string;
+  user_id: string;
+  stars: number; // 1-5
+  comment: string | null;
+  created_at: string;
+  user?: Profile;
+}
+
 export interface Post {
   id: string;
   author_id: string;
@@ -39,6 +49,9 @@ export interface Post {
     replyTo?: { userId: string; text: string };
   }>;
   created_at: string;
+  ratings?: Rating[];
+  average_rating?: number;
+  author?: Profile;
 }
 
 // ==================== AUTENTICACIÓN ====================
@@ -54,7 +67,6 @@ export async function signUp(
     currency: string;
   }
 ): Promise<{ error: string | null; user: Profile | null }> {
-  // 1. Crear usuario en Supabase Auth
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email,
     password,
@@ -68,7 +80,6 @@ export async function signUp(
     return { error: 'No se pudo crear el usuario', user: null };
   }
 
-  // 2. Crear perfil en la tabla profiles
   const { data: profileData2, error: profileError } = await supabase
     .from('profiles')
     .insert({
@@ -104,7 +115,6 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<{ error: string | null; user: Profile | null }> {
-  // 1. Iniciar sesión en Supabase Auth
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email,
     password,
@@ -118,7 +128,6 @@ export async function signIn(
     return { error: 'No se pudo iniciar sesión', user: null };
   }
 
-  // 2. Obtener el perfil
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
@@ -190,14 +199,32 @@ export async function createPost(
 export async function getPosts(): Promise<{ error: string | null; posts: Post[] }> {
   const { data, error } = await supabase
     .from('posts')
-    .select('*')
+    .select(`
+      *,
+      author:profiles!author_id(*),
+      ratings:ratings(*)
+    `)
     .order('created_at', { ascending: false });
 
   if (error) {
     return { error: error.message, posts: [] };
   }
 
-  return { error: null, posts: data as Post[] };
+  // Calcular promedio de calificaciones
+  const postsWithRatings = (data as any[]).map(post => {
+    const ratings = post.ratings || [];
+    const avgRating = ratings.length > 0
+      ? ratings.reduce((sum: number, r: Rating) => sum + r.stars, 0) / ratings.length
+      : 0;
+    
+    return {
+      ...post,
+      average_rating: avgRating,
+      ratings: ratings
+    };
+  });
+
+  return { error: null, posts: postsWithRatings as Post[] };
 }
 
 export async function updatePost(
@@ -217,6 +244,89 @@ export async function deletePost(postId: string): Promise<{ error: string | null
     .from('posts')
     .delete()
     .eq('id', postId);
+
+  return { error: error?.message || null };
+}
+
+// ==================== RATINGS ====================
+
+export async function createRating(
+  postId: string,
+  userId: string,
+  stars: number,
+  comment: string | null
+): Promise<{ error: string | null; rating: Rating | null }> {
+  const { data, error } = await supabase
+    .from('ratings')
+    .insert({
+      post_id: postId,
+      user_id: userId,
+      stars,
+      comment,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return { error: error.message, rating: null };
+  }
+
+  return { error: null, rating: data as Rating };
+}
+
+export async function getRatingsByPost(postId: string): Promise<{ error: string | null; ratings: Rating[] }> {
+  const { data, error } = await supabase
+    .from('ratings')
+    .select(`
+      *,
+      user:profiles!user_id(*)
+    `)
+    .eq('post_id', postId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    return { error: error.message, ratings: [] };
+  }
+
+  return { error: null, ratings: data as Rating[] };
+}
+
+export async function getUserRatingForPost(
+  postId: string,
+  userId: string
+): Promise<{ error: string | null; rating: Rating | null }> {
+  const { data, error } = await supabase
+    .from('ratings')
+    .select('*')
+    .eq('post_id', postId)
+    .eq('user_id', userId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') { // PGRST116 = no rows
+    return { error: error.message, rating: null };
+  }
+
+  return { error: null, rating: data as Rating | null };
+}
+
+export async function updateRating(
+  ratingId: string,
+  stars: number,
+  comment: string | null
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from('ratings')
+    .update({ stars, comment })
+    .eq('id', ratingId);
+
+  return { error: error?.message || null };
+}
+
+export async function deleteRating(ratingId: string): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from('ratings')
+    .delete()
+    .eq('id', ratingId);
 
   return { error: error?.message || null };
 }
