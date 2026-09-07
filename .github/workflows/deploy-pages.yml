@@ -1,0 +1,64 @@
+# =============================================================
+#  PickPay · Despliegue automático en GitHub Pages
+#
+#  Cada push a `main` compila la app y la publica en:
+#    https://<tu-usuario>.github.io/PickPay-web/
+#
+#  Requisitos (una sola vez, en el repo de GitHub):
+#    Settings → Pages → Build and deployment → Source:
+#      selecciona "GitHub Actions"
+# =============================================================
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # permite lanzarlo a mano desde la pestaña Actions
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un solo despliegue a la vez; el anterior se descarta si llega otro push.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Compilar (base /PickPay-web/ para GitHub Pages)
+        run: npm run build
+        env:
+          VITE_BASE: "/PickPay-web/"
+
+      - name: Subir artefacto
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4
