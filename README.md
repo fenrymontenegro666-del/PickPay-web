@@ -1,153 +1,182 @@
-# PickPay - Plataforma de Contenido con Calificaciones
+# 🚀 PickPay
 
-Plataforma social donde los creadores pueden publicar contenido (gratis o de pago) y los usuarios pueden calificar el contenido que compran.
+Plataforma social moderna donde los creadores pueden compartir contenido y monetizar su trabajo. Los usuarios pueden publicar contenido gratuito o de pago, y calificar el contenido que compran.
 
 ## ✨ Características
 
-- ✅ **Autenticación con Supabase** - Registro e inicio de sesión seguros
-- ✅ **Sistema de Calificaciones** - Los usuarios pueden calificar el contenido comprado (1-5 estrellas + comentario)
-- ✅ **Contenido de Pago** - Los creadores pueden vender contenido con precios personalizados
-- ✅ **Feed Social** - Visualización de publicaciones con calificaciones promedio
-- ✅ **Perfiles de Usuario** - Biografía, avatar y estadísticas
-- ✅ **Modo Claro/Oscuro** - Interfaz adaptable
-- ✅ **Responsive** - Funciona en desktop y móvil
-- ✅ **Multi-moneda** - Soporte para EUR, USD, MXN, ARS, COP
+- **Publicación Libre**: Todos pueden publicar fotos, videos y texto sin necesidad de Premium
+- **Contenido Monetizable**: Los usuarios Premium pueden publicar contenido con precio
+- **Sistema de Calificaciones**: Los compradores pueden calificar el contenido (1-5 estrellas) con comentarios
+- **Desbloqueo de Contenido**: Los usuarios pagan una vez para acceder al contenido premium
+- **Perfiles de Usuario**: Información personal, foto de perfil y portada
+- **Modo Claro/Oscuro**: Cambia entre temas según tu preferencia
+- **Responsive**: Funciona perfectamente en móvil y desktop
+- **Base de Datos en la Nube**: Conectado a Supabase para almacenamiento seguro
 
-## 🚀 Configuración Inicial
+## 🛠️ Tecnologías
 
-### 1. Configurar Supabase
+- **React 18** con TypeScript
+- **Vite** como bundler
+- **Tailwind CSS** para estilos
+- **Supabase** para backend (autenticación, base de datos, almacenamiento)
+- **Lucide React** para iconos
 
-1. Ve a tu proyecto en Supabase: https://pbuqxypmxkhkaluuquyr.supabase.co
-2. Abre el **SQL Editor** en el menú lateral
-3. Copia y pega todo el contenido de `supabase-schema.sql`
-4. Haz clic en **Run** para ejecutar el SQL
-5. Verifica que se crearon las tablas: `profiles`, `posts`, `ratings`
+## 📋 Requisitos Previos
 
-### 2. Configurar Variables de Entorno
+- Node.js 18+ y npm
+- Cuenta de Supabase (gratuita)
 
-El archivo `.env` ya está creado con tus credenciales:
+## 🚀 Instalación y Configuración
 
+### 1. Clonar el repositorio
+
+```bash
+git clone https://github.com/TU-USUARIO/PickPay-web.git
+cd PickPay-web
 ```
-VITE_SUPABASE_URL=https://pbuqxypmxkhkaluuquyr.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
 
-### 3. Instalar Dependencias
+### 2. Instalar dependencias
 
 ```bash
 npm install
 ```
 
-### 4. Ejecutar en Desarrollo
+### 3. Configurar Supabase
+
+1. Crea una cuenta en [Supabase](https://supabase.com)
+2. Crea un nuevo proyecto
+3. Ve a **SQL Editor** y ejecuta el contenido de `supabase-schema.sql`
+4. Copia tus credenciales de Supabase:
+   - Ve a **Settings** → **API**
+   - Copia **Project URL** y **anon/public key**
+
+### 4. Configurar variables de entorno
+
+Crea un archivo `.env` en la raíz del proyecto:
+
+```bash
+VITE_SUPABASE_URL=https://tu-proyecto.supabase.co
+VITE_SUPABASE_ANON_KEY=tu-anon-key-aqui
+```
+
+### 5. Ejecutar en modo desarrollo
 
 ```bash
 npm run dev
 ```
 
-La aplicación estará disponible en `http://localhost:5173`
+Abre [http://localhost:5173](http://localhost:5173) en tu navegador.
 
-## 📋 Cómo Usar
+## 📦 Compilación para Producción
 
-### Para Creadores
+```bash
+npm run build
+```
 
-1. **Regístrate** con tu email y crea tu perfil
-2. **Activa Premium** (simulado) para poder publicar contenido de pago
-3. **Crea publicaciones** con o sin precio
-4. **Gana dinero** cuando los usuarios desbloqueen tu contenido
+Los archivos compilados estarán en la carpeta `dist/`.
 
-### Para Usuarios
+## 🌐 Despliegue en GitHub Pages
 
-1. **Regístrate** y explora el feed
-2. **Desbloquea contenido** pagando el precio establecido
-3. **Califica el contenido** que compraste (1-5 estrellas + comentario)
-4. **Ayuda a otros** compartiendo tu opinión
+### Opción 1: Despliegue Automático con GitHub Actions
 
-## 🌟 Sistema de Calificaciones
+El proyecto incluye un workflow de GitHub Actions que despliega automáticamente cuando haces push a la rama `main`.
 
-### Cómo Funciona
+1. Sube tu código a GitHub:
 
-1. **Solo puedes calificar contenido que compraste** (desbloqueaste)
-2. **Una calificación por post** - puedes editarla pero no duplicarla
-3. **Calificación visible** - todos ven el promedio antes de comprar
-4. **Comentarios opcionales** - puedes dejar un comentario junto con las estrellas
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/TU-USUARIO/PickPay-web.git
+git push -u origin main
+```
 
-### Visualización
+2. Configura GitHub Pages:
+   - Ve a **Settings** → **Pages**
+   - En **Source**, selecciona **GitHub Actions**
 
-- **Estrellas doradas** muestran la calificación promedio
-- **Número de calificaciones** aparece junto al promedio
-- **Botón "Calificar"** aparece después de desbloquear
-- **Botón "Editar calificación"** si ya calificaste
+3. El workflow se ejecutará automáticamente y tu sitio estará disponible en:
+   `https://TU-USUARIO.github.io/PickPay-web/`
+
+### Opción 2: Despliegue Manual
+
+1. Compila el proyecto:
+
+```bash
+npm run build
+```
+
+2. Sube la carpeta `dist/` a GitHub Pages manualmente.
 
 ## 🗄️ Estructura de la Base de Datos
 
-### Tabla `profiles`
-- Información de usuarios
-- Saldo, estado premium, país, moneda
-- Avatar, biografía, tarjeta de pago
+El proyecto usa 3 tablas principales en Supabase:
 
-### Tabla `posts`
+### profiles
+- Datos de usuarios (nombre, email, bio, avatar, etc.)
+- Información de Premium y saldo
+- Configuración de país y moneda
+
+### posts
 - Publicaciones de los usuarios
-- Precio (null = gratis)
-- Lista de usuarios que desbloquearon
-- Comentarios
+- Contenido gratuito o con precio
+- Likes, desbloqueos y comentarios
 
-### Tabla `ratings`
-- Calificaciones de 1-5 estrellas
-- Comentarios opcionales
-- Relación única: un usuario = una calificación por post
+### ratings
+- Calificaciones de contenido comprado
+- Estrellas (1-5) y comentarios
+- Relación con usuarios y posts
 
-## 🔒 Seguridad
+## 🔐 Seguridad
 
-- **Row Level Security (RLS)** activado en todas las tablas
-- Los usuarios solo pueden editar sus propios datos
-- Las calificaciones son únicas por usuario/post
-- Autenticación segura con Supabase Auth
+- Las credenciales de Supabase están protegidas en el archivo `.env`
+- El archivo `.gitignore` evita que se suban las credenciales a GitHub
+- Usa variables de entorno para todas las configuraciones sensibles
+- Supabase maneja la autenticación de forma segura
 
-## 📦 Despliegue en GitHub Pages
+## 📝 Uso
 
-El proyecto está configurado para desplegarse automáticamente:
+### Registro
+1. Abre la aplicación
+2. Haz clic en "Registrarse"
+3. Completa tu información (nombre, email, contraseña, fecha de nacimiento)
+4. Verifica tu email
 
-```bash
-git add .
-git commit -m "feat: sistema de calificaciones con Supabase"
-git push origin main
-```
+### Publicar Contenido
+1. Haz clic en "¿Qué quieres compartir?"
+2. Escribe tu contenido
+3. Opcionalmente, marca "Contenido monetizable" y establece un precio (requiere Premium)
+4. Haz clic en "Publicar"
 
-GitHub Actions compilará y publicará en:
-`https://TU-USUARIO.github.io/PickPay-web/`
-
-## 🛠️ Tecnologías
-
-- **React 18** + TypeScript
-- **Vite** - Build tool rápido
-- **Tailwind CSS** - Estilos
-- **Supabase** - Backend como servicio
-  - PostgreSQL - Base de datos
-  - Auth - Autenticación
-  - Realtime - Actualizaciones en tiempo real
-- **Lucide React** - Iconos
-
-## 📝 Próximas Mejoras
-
-- [ ] Subida real de imágenes/videos
-- [ ] Chat en tiempo real
-- [ ] Sistema de suscripciones mensuales
-- [ ] Notificaciones push
-- [ ] Integración con Stripe para pagos reales
-- [ ] Moderación de contenido
-- [ ] Sistema de seguidores
+### Calificar Contenido
+1. Desbloquea contenido de pago
+2. Haz clic en "Calificar"
+3. Selecciona estrellas (1-5) y escribe un comentario opcional
+4. Envía tu calificación
 
 ## 🤝 Contribuir
 
-Este es un proyecto de demostración. Siéntete libre de:
-- Reportar bugs
-- Sugerir mejoras
-- Hacer forks y personalizar
+Las contribuciones son bienvenidas. Por favor:
+
+1. Haz fork del proyecto
+2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
+3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push a la rama (`git push origin feature/AmazingFeature`)
+5. Abre un Pull Request
 
 ## 📄 Licencia
 
-MIT License - Úsalo como quieras
+Este proyecto está bajo la Licencia MIT.
+
+## 👤 Autor
+
+Creado con ❤️ para la comunidad de creadores de contenido.
+
+## 🐛 Reportar Problemas
+
+Si encuentras algún bug o tienes sugerencias, por favor abre un issue en GitHub.
 
 ---
 
-**Desarrollado con ❤️ usando Supabase y React**
+**Nota**: Este proyecto está en desarrollo activo. Algunas características pueden cambiar o mejorar en futuras versiones.
