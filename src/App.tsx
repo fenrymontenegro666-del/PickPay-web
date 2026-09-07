@@ -378,61 +378,106 @@ function FeedView({
 
   async function handleCreatePost() {
     if (!newPostText.trim()) return;
-    const price = newPostPrice ? parseInt(newPostPrice) * 100 : null;
+    
+    // Si monetiza, usar el precio. Si no, es gratis (null)
+    const price = monetizeContent && newPostPrice ? parseInt(newPostPrice) * 100 : null;
+    
     await onCreatePost(newPostText, price);
     setNewPostText('');
     setNewPostPrice('');
     setShowCreateForm(false);
+    setMonetizeContent(false);
   }
 
   const isPremium = user.premium_until && new Date(user.premium_until) > new Date();
+  const [monetizeContent, setMonetizeContent] = useState(false);
+
+  function handleCreatePostClick() {
+    if (monetizeContent && !isPremium) {
+      alert('Para publicar contenido monetizable necesitas activar Premium');
+      return;
+    }
+    handleCreatePost();
+  }
 
   return (
     <div className="space-y-6">
-      {/* Create Post */}
-      {isPremium && (
-        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
-          {!showCreateForm ? (
-            <button
-              onClick={() => setShowCreateForm(true)}
-              className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-left"
-            >
-              ¿Qué quieres compartir?
-            </button>
-          ) : (
-            <div className="space-y-4">
-              <textarea
-                value={newPostText}
-                onChange={(e) => setNewPostText(e.target.value)}
-                placeholder="Escribe tu contenido..."
-                className="w-full px-4 py-3 bg-slate-700 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none resize-none"
-                rows={4}
+      {/* Create Post - Disponible para todos */}
+      <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
+        {!showCreateForm ? (
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-left"
+          >
+            ¿Qué quieres compartir?
+          </button>
+        ) : (
+          <div className="space-y-4">
+            <textarea
+              value={newPostText}
+              onChange={(e) => setNewPostText(e.target.value)}
+              placeholder="Escribe tu contenido..."
+              className="w-full px-4 py-3 bg-slate-700 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none resize-none"
+              rows={4}
+            />
+            
+            {/* Opción de monetizar */}
+            <div className="flex items-center gap-3 p-4 bg-slate-700/50 rounded-lg">
+              <input
+                type="checkbox"
+                id="monetize"
+                checked={monetizeContent}
+                onChange={(e) => setMonetizeContent(e.target.checked)}
+                className="w-5 h-5 rounded border-slate-600 text-blue-600 focus:ring-blue-500"
               />
+              <label htmlFor="monetize" className="flex-1 cursor-pointer">
+                <p className="font-semibold text-white">Contenido monetizable</p>
+                <p className="text-sm text-slate-400">Los usuarios pagarán para desbloquear este contenido</p>
+              </label>
+            </div>
+
+            {/* Campo de precio solo si monetiza */}
+            {monetizeContent && (
               <input
                 type="number"
-                placeholder="Precio (€) - deja vacío para gratis"
+                placeholder="Precio (€)"
                 value={newPostPrice}
                 onChange={(e) => setNewPostPrice(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-700 rounded-lg border border-slate-600 focus:border-blue-500 focus:outline-none"
+                min="1"
               />
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCreatePost}
-                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition"
-                >
-                  Publicar
-                </button>
-                <button
-                  onClick={() => setShowCreateForm(false)}
-                  className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition"
-                >
-                  Cancelar
-                </button>
+            )}
+
+            {/* Aviso si no tiene Premium y quiere monetizar */}
+            {monetizeContent && !isPremium && (
+              <div className="p-4 bg-amber-900/30 border border-amber-700 rounded-lg">
+                <p className="text-amber-200 text-sm">
+                  ⚠️ Para publicar contenido monetizable necesitas activar Premium
+                </p>
               </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreatePostClick}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition"
+              >
+                Publicar
+              </button>
+              <button
+                onClick={() => {
+                  setShowCreateForm(false);
+                  setMonetizeContent(false);
+                  setNewPostPrice('');
+                }}
+                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition"
+              >
+                Cancelar
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {/* Posts */}
       {posts.map((post) => (
